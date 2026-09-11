@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { AppNav } from "@/components/AppNav";
 
 type Opportunity = {
@@ -19,9 +20,11 @@ type Opportunity = {
 };
 
 export function OpportunitiesClient() {
+  const router = useRouter();
   const [opportunities, setOpportunities] = useState<Opportunity[]>([]);
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
+  const [building, setBuilding] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   async function load() {
@@ -52,6 +55,24 @@ export function OpportunitiesClient() {
   async function handleSelect(id: string) {
     await fetch(`/api/opportunities/${id}/select`, { method: "POST" });
     await load();
+  }
+
+  async function handleBuild(opportunityId: string) {
+    setBuilding(opportunityId);
+    setError(null);
+    const res = await fetch("/api/products", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ opportunityId }),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({ error: "Something went wrong." }));
+      setError(body.error ?? "Something went wrong.");
+      setBuilding(null);
+      return;
+    }
+    const body = await res.json();
+    router.push(`/products/${body.product.id}`);
   }
 
   return (
@@ -100,13 +121,22 @@ export function OpportunitiesClient() {
                 <div>Competition: {100 - o.competitionDensity}/100 open — {o.competitionEvidence}</div>
                 <div>Monetisation: {o.monetisationScore}/100</div>
               </dl>
-              {o.status === "selected" ? (
-                <span className="text-xs font-medium text-green-700">Selected</span>
-              ) : (
-                <button onClick={() => handleSelect(o.id)} className="text-xs font-medium text-neutral-700 underline">
-                  Select this one
+              <div className="flex items-center gap-4">
+                {o.status === "selected" ? (
+                  <span className="text-xs font-medium text-green-700">Selected</span>
+                ) : (
+                  <button onClick={() => handleSelect(o.id)} className="text-xs font-medium text-neutral-700 underline">
+                    Select this one
+                  </button>
+                )}
+                <button
+                  onClick={() => handleBuild(o.id)}
+                  disabled={building === o.id}
+                  className="rounded-md bg-neutral-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-neutral-800 disabled:opacity-50"
+                >
+                  {building === o.id ? "Choosing format…" : "Build this →"}
                 </button>
-              )}
+              </div>
             </li>
           ))}
         </ul>

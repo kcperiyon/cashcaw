@@ -7,6 +7,11 @@ export type {
   InterviewTurnOutput,
   OpportunityInput,
   OpportunityOutput,
+  BlueprintInput,
+  BlueprintOutput,
+  ContentInput,
+  ContentOutput,
+  ProductFormat,
 } from "@/lib/ai/provider";
 
 /**

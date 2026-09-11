@@ -6,9 +6,10 @@
 // two-layer pattern as Zeroid and Closa, reused verbatim rather than
 // re-derived.
 //
-// Phase 1 adds: InterviewMessage/ExpertiseFact (the Expertise Interview) and
-// Opportunity (the Opportunity Finder). Deliberately NOT modeled yet
-// (Phase 1's Product Factory/Offer/Checkout, or later): Product, Offer,
+// Phase 1 slice 1 added: InterviewMessage/ExpertiseFact (the Expertise
+// Interview) and Opportunity (the Opportunity Finder). Phase 1 slice 2 (this
+// pass) adds Product/Module/Lesson/ContentSection (the Product Factory).
+// Deliberately NOT modeled yet (Phase 1's Offer/Checkout, or later): Offer,
 // SalesPage, Order, AiCreditWallet, VideoCreditWallet, AffiliateLink,
 // LedgerEntry.
 
@@ -41,6 +42,7 @@ model Organization {
   interviewMessages InterviewMessage[]
   expertiseFacts    ExpertiseFact[]
   opportunities     Opportunity[]
+  products          Product[]
 }
 
 model User {
@@ -163,6 +165,93 @@ model Opportunity {
   createdAt DateTime          @default(now())
 
   organization Organization @relation(fields: [organizationId], references: [id])
+  products     Product[]
 
   @@index([organizationId, overallScore])
+}
+
+enum ProductFormat {
+  course
+  ebook
+  template
+}
+
+enum ProductStatus {
+  draft
+  generated
+}
+
+// The Product Factory's output. blueprintReason/outlineJson persist the AI's
+// stated format choice and ordered outline, exactly as generated — the
+// caller never silently overrides the AI's format choice, only enforces the
+// "format-transformation fit" rule from docs/business-methodology.md §3
+// before letting a founder proceed. Content itself lives in Module/Lesson
+// (course) or ContentSection (ebook/template) below, not here.
+model Product {
+  id             String        @id @default(cuid())
+  organizationId String
+  opportunityId  String
+  format         ProductFormat
+  formatReason   String
+  title          String
+  audience       String
+  transformation String
+  outlineJson    Json
+  status         ProductStatus @default(draft)
+  createdAt      DateTime      @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  opportunity  Opportunity  @relation(fields: [opportunityId], references: [id])
+  modules      Module[]
+  sections     ContentSection[]
+
+  @@index([organizationId])
+}
+
+// Course format only — a course is the one format that needs two levels
+// (module -> lesson), since it teaches a multi-step skill over time.
+model Module {
+  id        String @id @default(cuid())
+  productId String
+  order     Int
+  title     String
+
+  product Product  @relation(fields: [productId], references: [id])
+  lessons Lesson[]
+
+  @@index([productId, order])
+}
+
+model Lesson {
+  id       String @id @default(cuid())
+  moduleId String
+  order    Int
+  title    String
+  content  String
+  exercise String
+
+  module Module @relation(fields: [moduleId], references: [id])
+
+  @@index([moduleId, order])
+}
+
+enum ContentSectionKind {
+  chapter
+  template_item
+}
+
+// Ebook and template-pack formats share this flat (single-level) shape —
+// both are an ordered list of finished content, unlike a course's
+// module->lesson nesting. `kind` only affects how the UI labels them.
+model ContentSection {
+  id        String              @id @default(cuid())
+  productId String
+  order     Int
+  kind      ContentSectionKind
+  title     String
+  content   String
+
+  product Product @relation(fields: [productId], references: [id])
+
+  @@index([productId, order])
 }
