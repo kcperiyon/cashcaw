@@ -1,13 +1,12 @@
 "use client";
 
 import { useEffect, useState, type FormEvent } from "react";
-import { useRouter } from "next/navigation";
+import { AppNav } from "@/components/AppNav";
 
 type KnowledgeSource = { id: string; name: string; kind: string; createdAt: string };
 type KnowledgeChunk = { content: string; source: string; score: number };
 
 export function KnowledgeClient() {
-  const router = useRouter();
   const [sources, setSources] = useState<KnowledgeSource[]>([]);
   const [name, setName] = useState("");
   const [text, setText] = useState("");
@@ -79,20 +78,10 @@ export function KnowledgeClient() {
     setQuerying(false);
   }
 
-  async function handleLogout() {
-    await fetch("/api/auth/logout", { method: "POST" });
-    router.push("/");
-    router.refresh();
-  }
-
   return (
     <main className="mx-auto max-w-2xl px-4 py-10">
-      <div className="mb-8 flex items-center justify-between">
-        <h1 className="text-2xl font-semibold text-neutral-900">My Expertise</h1>
-        <button onClick={handleLogout} className="text-sm text-neutral-500 underline hover:text-neutral-700">
-          Sign out
-        </button>
-      </div>
+      <AppNav />
+      <h1 className="mb-2 text-2xl font-semibold text-neutral-900">My Expertise</h1>
       <p className="mb-8 text-sm text-neutral-500">
         Drop in a note about what you know. It goes into your own knowledge base — later phases will interview you
         properly and turn this into scored business opportunities.

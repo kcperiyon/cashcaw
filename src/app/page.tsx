@@ -4,7 +4,7 @@ import { redirect } from "next/navigation";
 
 export default async function HomePage() {
   const user = await getCurrentUser();
-  if (user) redirect("/knowledge");
+  if (user) redirect("/interview");
 
   return (
     <main className="flex min-h-screen flex-col items-center justify-center bg-neutral-50 px-4 text-center">

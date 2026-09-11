@@ -1,4 +1,4 @@
-// Phase 0 schema (see docs/business-methodology.md and the published build
+// Phase 0+1 schema (see docs/business-methodology.md and the published build
 // plan's "Data model & API surface" section). Every tenant-scoped model
 // below carries an organizationId column and gets a matching Postgres RLS
 // policy in migrations/<ts>_rls/migration.sql — app-level scoping via
@@ -6,10 +6,11 @@
 // two-layer pattern as Zeroid and Closa, reused verbatim rather than
 // re-derived.
 //
-// Deliberately NOT modeled yet (Phase 1+, additive migrations later, not
-// schema surgery now): Opportunity, Product, Offer, SalesPage, Order,
-// AiCreditWallet, VideoCreditWallet, AffiliateLink, LedgerEntry. Phase 0's
-// only job is auth + org creation + a real knowledge round-trip.
+// Phase 1 adds: InterviewMessage/ExpertiseFact (the Expertise Interview) and
+// Opportunity (the Opportunity Finder). Deliberately NOT modeled yet
+// (Phase 1's Product Factory/Offer/Checkout, or later): Product, Offer,
+// SalesPage, Order, AiCreditWallet, VideoCreditWallet, AffiliateLink,
+// LedgerEntry.
 
 generator client {
   provider = "prisma-client"
@@ -35,8 +36,11 @@ model Organization {
   slug      String   @unique
   createdAt DateTime @default(now())
 
-  memberships      OrgMembership[]
-  knowledgeSources KnowledgeSource[]
+  memberships       OrgMembership[]
+  knowledgeSources  KnowledgeSource[]
+  interviewMessages InterviewMessage[]
+  expertiseFacts    ExpertiseFact[]
+  opportunities     Opportunity[]
 }
 
 model User {
@@ -86,4 +90,79 @@ model KnowledgeSource {
   organization Organization @relation(fields: [organizationId], references: [id])
 
   @@index([organizationId])
+}
+
+enum InterviewRole {
+  founder
+  interviewer
+}
+
+// The Expertise Interview transcript (docs/business-methodology.md's input
+// side). Kept separate from KnowledgeSource — this is structured
+// question/answer, not a free-text document — and separate from
+// ExpertiseFact below: a message is what was SAID, a fact is what was
+// EXTRACTED from it. Both persist so the interview can resume and so facts
+// are auditable back to the message that produced them.
+model InterviewMessage {
+  id             String        @id @default(cuid())
+  organizationId String
+  role           InterviewRole
+  content        String
+  createdAt      DateTime      @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+
+  @@index([organizationId, createdAt])
+}
+
+// Concrete, extracted facts about the founder's expertise — the actual
+// input to proposeOpportunities() (src/lib/ai/provider.ts). Deliberately
+// flat strings, not embeddings: at this volume (a handful to a few dozen
+// facts per org) there's no retrieval problem to solve, unlike the
+// paragraph-length notes in KnowledgeSource/platform-services.
+model ExpertiseFact {
+  id             String   @id @default(cuid())
+  organizationId String
+  content        String
+  createdAt      DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+
+  @@index([organizationId])
+}
+
+enum OpportunityStatus {
+  proposed
+  selected
+  archived
+}
+
+// One row per opportunity candidate. Sub-scores + evidence come from the AI
+// provider (ProposedOpportunity); overallScore is ALWAYS computed by
+// src/lib/methodology/scoring.ts from the weights in
+// docs/business-methodology.md §2 — never trusted from the model — and
+// stored, not recomputed on every read, so a past run stays explainable
+// even if the weights change later (same never-rewrite-history discipline
+// as Mongozutu's Rules Engine).
+model Opportunity {
+  id             String            @id @default(cuid())
+  organizationId String
+  title          String
+  audience       String
+  problem        String
+
+  demandScore         Int
+  demandEvidence      String
+  expertiseFitScore   Int
+  competitionDensity  Int
+  competitionEvidence String
+  monetisationScore   Int
+  overallScore        Int
+
+  status    OpportunityStatus @default(proposed)
+  createdAt DateTime          @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+
+  @@index([organizationId, overallScore])
 }
