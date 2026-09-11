@@ -1,0 +1,89 @@
+// Phase 0 schema (see docs/business-methodology.md and the published build
+// plan's "Data model & API surface" section). Every tenant-scoped model
+// below carries an organizationId column and gets a matching Postgres RLS
+// policy in migrations/<ts>_rls/migration.sql — app-level scoping via
+// src/lib/tenant-db.ts is the primary defense, RLS is the backstop. Same
+// two-layer pattern as Zeroid and Closa, reused verbatim rather than
+// re-derived.
+//
+// Deliberately NOT modeled yet (Phase 1+, additive migrations later, not
+// schema surgery now): Opportunity, Product, Offer, SalesPage, Order,
+// AiCreditWallet, VideoCreditWallet, AffiliateLink, LedgerEntry. Phase 0's
+// only job is auth + org creation + a real knowledge round-trip.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+// Connection URL for migrate/introspect comes from prisma7.config.ts (Prisma 7
+// moved it out of the schema file). PrismaClient at runtime still needs its
+// own url/adapter wiring wherever it's constructed — see src/lib/db.ts.
+datasource db {
+  provider = "postgresql"
+}
+
+enum OrgRole {
+  owner
+  editor
+  viewer
+}
+
+model Organization {
+  id        String   @id @default(cuid())
+  name      String
+  slug      String   @unique
+  createdAt DateTime @default(now())
+
+  memberships      OrgMembership[]
+  knowledgeSources KnowledgeSource[]
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  name         String
+  passwordHash String
+  createdAt    DateTime @default(now())
+
+  memberships OrgMembership[]
+}
+
+// A user's role within one organization. A user can belong to more than one
+// organization — role is per-membership, never global.
+model OrgMembership {
+  id             String   @id @default(cuid())
+  organizationId String
+  userId         String
+  role           OrgRole  @default(owner)
+  createdAt      DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  user         User         @relation(fields: [userId], references: [id])
+
+  @@unique([organizationId, userId])
+  @@index([organizationId])
+  @@index([userId])
+}
+
+enum KnowledgeSourceKind {
+  text
+  url
+}
+
+// Tracks WHICH sources this org has fed into "My Expertise" — the actual
+// content lives in platform-services' knowledge/RAG service, never here
+// (see src/lib/knowledge/client.ts and the build plan's reuse map). This row
+// exists so the UI can list what's been ingested and delete it from both
+// places.
+model KnowledgeSource {
+  id             String              @id @default(cuid())
+  organizationId String
+  name           String
+  kind           KnowledgeSourceKind
+  createdAt      DateTime            @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+
+  @@index([organizationId])
+}
