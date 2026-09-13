@@ -43,6 +43,7 @@ model Organization {
   expertiseFacts    ExpertiseFact[]
   opportunities     Opportunity[]
   products          Product[]
+  offers            Offer[]
 }
 
 model User {
@@ -204,6 +205,7 @@ model Product {
   opportunity  Opportunity  @relation(fields: [opportunityId], references: [id])
   modules      Module[]
   sections     ContentSection[]
+  offer        Offer?
 
   @@index([organizationId])
 }
@@ -254,4 +256,52 @@ model ContentSection {
   product Product @relation(fields: [productId], references: [id])
 
   @@index([productId, order])
+}
+
+// One offer per product — the underlying deal doesn't change with sales-
+// page positioning, only how it's framed (see SalesPage below).
+model Offer {
+  id            String   @id @default(cuid())
+  organizationId String
+  productId     String   @unique
+  promise       String
+  mechanism     String
+  bonusesJson   Json
+  guaranteeText String
+  priceTiersJson Json
+  createdAt     DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  product      Product      @relation(fields: [productId], references: [id])
+  salesPages   SalesPage[]
+
+  @@index([organizationId])
+}
+
+enum SalesPagePositioning {
+  outcome
+  pain
+  identity
+}
+
+// Three variants per offer, one honest positioning angle each.
+// clarityScore is the AI's own subjective read (see
+// BusinessAIProvider.generateSalesPages()'s doc comment) — deliberately not
+// a weighted formula like Opportunity.overallScore, since sales-copy
+// quality has no equivalent objective inputs to weight.
+model SalesPage {
+  id           String               @id @default(cuid())
+  offerId      String
+  positioning  SalesPagePositioning
+  headline     String
+  subheadline  String
+  copyJson     Json
+  clarityScore Int
+  rationale    String
+  selected     Boolean              @default(false)
+  createdAt    DateTime             @default(now())
+
+  offer Offer @relation(fields: [offerId], references: [id])
+
+  @@index([offerId])
 }

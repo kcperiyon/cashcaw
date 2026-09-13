@@ -12,6 +12,11 @@ export type {
   ContentInput,
   ContentOutput,
   ProductFormat,
+  OfferInput,
+  OfferOutput,
+  SalesPageInput,
+  SalesPageOutput,
+  PriceTier,
 } from "@/lib/ai/provider";
 
 /**

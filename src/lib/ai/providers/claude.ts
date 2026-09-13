@@ -8,8 +8,12 @@ import type {
   ContentOutput,
   InterviewTurnInput,
   InterviewTurnOutput,
+  OfferInput,
+  OfferOutput,
   OpportunityInput,
   OpportunityOutput,
+  SalesPageInput,
+  SalesPageOutput,
 } from "@/lib/ai/provider";
 
 // Anthropic's tool-use is USUALLY schema-compliant, not ALWAYS — a real run
@@ -21,39 +25,70 @@ import type {
 // this app already applies to overallScore/qualificationAccuracy, extended
 // to mean "don't trust the model's SHAPE either, not just its judgment."
 //
-// `looseStringArray` specifically recovers the exact failure mode observed:
-// a comma-separated, quoted list missing its outer `[`/`]`. If recovery
-// still doesn't produce a clean array, it fails loudly (a 502 the founder
-// can retry) rather than silently writing bad data — same principle as the
-// rollback-on-ingest-failure logic in the knowledge route.
-const looseStringArray = z.preprocess((val) => {
-  if (Array.isArray(val)) return val;
-  if (typeof val !== "string") return val;
-  const trimmed = val.trim();
+// `recoverArray` generalizes the recovery after TWO separate real failures
+// during this project's own build: `outline` (a string array) came back
+// bracket-less AND missing the first/last item's quotes, then later
+// `variants` (an array of full objects) came back bracket-less with intact
+// internal object syntax. Different malformations need different repairs —
+// an object array just needs its `[`/`]` restored; a string array needs the
+// quotes re-added too, since stripping `["`/`"]` from a real JSON array
+// takes the first and last item's quote marks with it. Tries progressively:
+// already-valid array -> parse as-is -> bare bracket wrap -> quote-wrapped
+// bracket wrap (string arrays only) -> give up and let the schema below
+// reject it loudly rather than silently writing corrupted data — same
+// principle as the rollback-on-ingest-failure logic in the knowledge route.
+function recoverArray<T extends z.ZodTypeAny>(itemSchema: T, { allowEmpty = false } = {}) {
+  return z.preprocess((val) => {
+    if (Array.isArray(val)) return val;
+    if (typeof val !== "string") return val;
+    const trimmed = val.trim();
 
-  if (trimmed.startsWith("[")) {
-    try {
-      return JSON.parse(trimmed);
-    } catch {
-      // fall through to the re-wrap attempt below
+    // An empty string genuinely means "no items" for fields where that's
+    // valid (e.g. extractedFacts on a turn with nothing new) — don't run it
+    // through the JSON-recovery attempts below, which would otherwise turn
+    // "" into a single garbage element via the final fallback.
+    if (allowEmpty && trimmed === "") return [];
+
+    if (trimmed.startsWith("[")) {
+      try {
+        return JSON.parse(trimmed);
+      } catch {
+        // fall through
+      }
     }
-  }
+    try {
+      return JSON.parse(`[${trimmed}]`);
+    } catch {
+      // fall through
+    }
+    try {
+      return JSON.parse(`["${trimmed}"]`);
+    } catch {
+      return [trimmed];
+    }
+  }, allowEmpty ? z.array(itemSchema) : z.array(itemSchema).min(1));
+}
 
-  // The actual observed failure mode: the outer `["` and `"]` of a real
-  // JSON array got stripped, leaving a comma-separated, quoted-in-the-
-  // middle list with NEITHER end quoted — e.g. `Foo", "Bar", "Baz`. A bare
-  // `[...]` wrap still fails to parse (the first/last items are missing
-  // their quote), so re-add the quotes specifically, not just the brackets.
-  try {
-    return JSON.parse(`["${trimmed}"]`);
-  } catch {
-    return [trimmed];
+const looseStringArray = recoverArray(z.string());
+const looseStringArrayAllowEmpty = recoverArray(z.string(), { allowEmpty: true });
+
+// Shared across every long-generation method (course/flat content, sales
+// pages) — any of them can hit max_tokens on a large enough outline/offer,
+// which otherwise surfaces as a confusing schema-validation error (a
+// half-written object missing most of its fields) rather than the actual
+// cause. Call this right after every messages.create() whose output could
+// plausibly run long.
+function checkTruncation(response: Anthropic.Message) {
+  if (response.stop_reason === "max_tokens") {
+    throw new Error(
+      "Content generation ran out of room before finishing — the outline may be too long for one pass. Try again, or generate a shorter outline."
+    );
   }
-}, z.array(z.string()).min(1));
+}
 
 const InterviewTurnSchema = z.object({
   message: z.string(),
-  extractedFacts: z.array(z.string()),
+  extractedFacts: looseStringArrayAllowEmpty,
 });
 
 const ProposedOpportunitySchema = z.object({
@@ -67,7 +102,7 @@ const ProposedOpportunitySchema = z.object({
   competitionEvidence: z.string(),
   monetisationScore: z.number().int(),
 });
-const OpportunityOutputSchema = z.object({ opportunities: z.array(ProposedOpportunitySchema) });
+const OpportunityOutputSchema = z.object({ opportunities: recoverArray(ProposedOpportunitySchema) });
 
 const BlueprintOutputSchema = z.object({
   format: z.enum(["course", "ebook", "template"]),
@@ -78,16 +113,44 @@ const BlueprintOutputSchema = z.object({
 });
 
 const CourseContentSchema = z.object({
-  modules: z.array(
+  modules: recoverArray(
     z.object({
       title: z.string(),
-      lessons: z.array(z.object({ title: z.string(), content: z.string(), exercise: z.string() })),
+      lessons: recoverArray(z.object({ title: z.string(), content: z.string(), exercise: z.string() })),
     })
   ),
 });
 
+const PriceTierSchema = z.object({ name: z.string(), price: z.string(), description: z.string() });
+
+const OfferOutputSchema = z.object({
+  promise: z.string(),
+  mechanism: z.string(),
+  bonuses: looseStringArray,
+  guaranteeText: z.string(),
+  priceTiers: recoverArray(PriceTierSchema),
+});
+
+const SalesPageVariantSchema = z.object({
+  positioning: z.enum(["outcome", "pain", "identity"]),
+  headline: z.string(),
+  subheadline: z.string(),
+  copy: z.object({
+    problemAgitation: z.string(),
+    mechanismExplainer: z.string(),
+    whatsIncluded: z.string(),
+    bonusesText: z.string(),
+    guaranteeText: z.string(),
+    faq: recoverArray(z.object({ question: z.string(), answer: z.string() })),
+    cta: z.string(),
+  }),
+  clarityScore: z.number().int().min(0).max(100),
+  rationale: z.string(),
+});
+const SalesPageOutputSchema = z.object({ variants: recoverArray(SalesPageVariantSchema) });
+
 const FlatContentSchema = z.object({
-  sections: z.array(z.object({ title: z.string(), content: z.string() })),
+  sections: recoverArray(z.object({ title: z.string(), content: z.string() })),
 });
 
 const INTERVIEW_TURN_TOOL = {
@@ -220,6 +283,81 @@ const GENERATE_FLAT_CONTENT_TOOL = {
   },
 };
 
+const GENERATE_OFFER_TOOL = {
+  name: "generate_offer",
+  description: "The commercial offer wrapped around this product: promise, mechanism, bonuses, guarantee, and price tiers.",
+  input_schema: {
+    type: "object" as const,
+    properties: {
+      promise: { type: "string", description: "The core outcome promise, one or two sentences — what the buyer walks away with." },
+      mechanism: { type: "string", description: "Why THIS specific approach delivers the promise, not generic 'proven method' language — the actual reason it works." },
+      bonuses: {
+        type: "array",
+        items: { type: "string" },
+        description: "2-4 real bonuses that directly support the transformation — never filler bonuses unrelated to the core promise.",
+      },
+      guaranteeText: { type: "string", description: "A concrete, specific guarantee — what triggers it and what happens, not vague 'satisfaction guaranteed' language." },
+      priceTiers: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            name: { type: "string" },
+            price: { type: "string", description: "A real suggested price, e.g. '$97' or '$297' — grounded in what this specific transformation is worth to this audience, not a round default." },
+            description: { type: "string" },
+          },
+          required: ["name", "price", "description"],
+        },
+        description: "Exactly 3 tiers, ascending price, each genuinely different in scope — not the same offer relabeled.",
+      },
+    },
+    required: ["promise", "mechanism", "bonuses", "guaranteeText", "priceTiers"],
+  },
+};
+
+const GENERATE_SALES_PAGES_TOOL = {
+  name: "generate_sales_pages",
+  description: "Three sales-page variants for the SAME offer, each a genuinely different honest positioning angle.",
+  input_schema: {
+    type: "object" as const,
+    properties: {
+      variants: {
+        type: "array",
+        description: "Exactly 3: one 'outcome' (leads with the result), one 'pain' (leads with the problem), one 'identity' (leads with who the buyer becomes).",
+        items: {
+          type: "object",
+          properties: {
+            positioning: { type: "string", enum: ["outcome", "pain", "identity"] },
+            headline: { type: "string" },
+            subheadline: { type: "string" },
+            copy: {
+              type: "object",
+              properties: {
+                problemAgitation: { type: "string" },
+                mechanismExplainer: { type: "string" },
+                whatsIncluded: { type: "string" },
+                bonusesText: { type: "string" },
+                guaranteeText: { type: "string" },
+                faq: {
+                  type: "array",
+                  items: { type: "object", properties: { question: { type: "string" }, answer: { type: "string" } }, required: ["question", "answer"] },
+                  description: "3-5 real objection-handling questions, not generic FAQ filler.",
+                },
+                cta: { type: "string" },
+              },
+              required: ["problemAgitation", "mechanismExplainer", "whatsIncluded", "bonusesText", "guaranteeText", "faq", "cta"],
+            },
+            clarityScore: { type: "integer", description: "0-100, your own honest read of how clearly THIS variant's promise lands for this exact audience — not a formula, your genuine judgment." },
+            rationale: { type: "string", description: "One sentence: why this angle does or doesn't land well for this audience." },
+          },
+          required: ["positioning", "headline", "subheadline", "copy", "clarityScore", "rationale"],
+        },
+      },
+    },
+    required: ["variants"],
+  },
+};
+
 export class ClaudeBusinessProvider implements BusinessAIProvider {
   readonly id = "claude";
   private client: Anthropic;
@@ -308,22 +446,22 @@ export class ClaudeBusinessProvider implements BusinessAIProvider {
   }
 
   async generateProductContent(input: ContentInput): Promise<ContentOutput> {
-    // A real live run during this project's own build hit max_tokens mid-
-    // generation on an 8-module course (each lesson's script + exercise
-    // adds up fast) and returned a truncated, unparseable tool call — the
-    // zod validation above correctly rejected it, but as a confusing
-    // "expected array, received undefined" rather than the actual cause.
-    // Fixed two ways: a much larger budget for the course branch (the only
-    // one with real risk of exceeding 8k — flat formats are one level, not
-    // two), and an explicit length cap in the instructions so quality
-    // content doesn't quietly balloon into an essay per lesson. If it still
-    // truncates, checkTruncation() below turns that into a clear, actionable
-    // error instead of a confusing schema-validation failure.
+    // Real live runs during this project's own build hit max_tokens mid-
+    // generation TWICE — once on an 8-module course, and once on an
+    // 8-item template pack (scorecards/decision-tools/trackers are each
+    // genuinely long; "flat formats are lower risk" was wrong, corrected
+    // here). Both returned a truncated, unparseable tool call that zod
+    // correctly rejected but as a confusing "expected X, received
+    // undefined" rather than the actual cause. Fixed for both branches: a
+    // larger shared budget, an explicit length cap in the instructions so
+    // quality content doesn't quietly balloon into an essay per item, and
+    // checkTruncation() below turns any future overrun into a clear,
+    // actionable error instead of a confusing schema-validation failure.
     const formatGuidance: Record<ContentInput["format"], string> = {
       course:
         "Write real teaching content for each lesson — the actual script, not an outline of one — plus one concrete exercise per lesson. Keep each lesson's script to roughly 150-300 words: substantive, not padded.",
-      ebook: "Write the actual chapter text, finished prose the reader could read straight through — not a summary of what the chapter would say.",
-      template: "Write the actual reusable tool for each item — a real checklist, a real fill-in-the-blank script, a real worksheet structure — something the buyer directly uses, not a description of one.",
+      ebook: "Write the actual chapter text, finished prose the reader could read straight through — not a summary of what the chapter would say. Keep each chapter to roughly 200-350 words: substantive, not padded.",
+      template: "Write the actual reusable tool for each item — a real checklist, a real fill-in-the-blank script, a real worksheet structure — something the buyer directly uses, not a description of one. Keep each item focused and usable, not an essay — a real tool someone fills in during a single sitting, roughly 150-300 words of instructional text plus whatever structure (checklist/table/fields) the tool itself needs.",
     };
 
     const system = [
@@ -333,14 +471,6 @@ export class ClaudeBusinessProvider implements BusinessAIProvider {
       `OUTLINE (write content for every one of these, in this order): ${input.outline.join(" | ")}`,
       formatGuidance[input.format],
     ].join("\n");
-
-    const checkTruncation = (response: Anthropic.Message) => {
-      if (response.stop_reason === "max_tokens") {
-        throw new Error(
-          "Content generation ran out of room before finishing — the outline may be too long for one pass. Try again, or generate a shorter outline."
-        );
-      }
-    };
 
     if (input.format === "course") {
       const response = await this.client.messages.create({
@@ -362,7 +492,7 @@ export class ClaudeBusinessProvider implements BusinessAIProvider {
 
     const response = await this.client.messages.create({
       model: this.model,
-      max_tokens: 8000,
+      max_tokens: 16000,
       system,
       tools: [GENERATE_FLAT_CONTENT_TOOL],
       tool_choice: { type: "tool", name: "generate_flat_content" },
@@ -375,5 +505,62 @@ export class ClaudeBusinessProvider implements BusinessAIProvider {
     }
     const { sections } = FlatContentSchema.parse(toolUse.input);
     return { format: input.format, sections } as ContentOutput;
+  }
+
+  async generateOffer(input: OfferInput): Promise<OfferOutput> {
+    const response = await this.client.messages.create({
+      model: this.model,
+      max_tokens: 1500,
+      system: [
+        `Build the commercial offer for "${input.title}".`,
+        `AUDIENCE: ${input.audience}`,
+        `TRANSFORMATION: ${input.transformation}`,
+        `WHAT'S ACTUALLY INSIDE: ${input.outline.join(" | ")}`,
+        "Ground the price tiers in what THIS transformation is worth to THIS audience — a busy VP paying to fix a retention problem tolerates a different price than an individual coach buying a personal tool. Don't default to generic $27/$97/$297 SaaS-info-product pricing.",
+      ].join("\n"),
+      tools: [GENERATE_OFFER_TOOL],
+      tool_choice: { type: "tool", name: "generate_offer" },
+      messages: [{ role: "user", content: "Build the offer now." }],
+    });
+    const toolUse = response.content.find((b) => b.type === "tool_use");
+    if (!toolUse || toolUse.type !== "tool_use") {
+      throw new Error("Claude did not return a generate_offer tool call.");
+    }
+    return OfferOutputSchema.parse(toolUse.input) satisfies OfferOutput;
+  }
+
+  async generateSalesPages(input: SalesPageInput): Promise<SalesPageOutput> {
+    // 6000 tokens genuinely wasn't enough here in a real run — 3 full
+    // variants (headline/subheadline/6 copy fields/FAQ array each) is
+    // comparable in size to an 8-item template pack, which already needed
+    // 16000. Same fix as the content-generation methods: bigger budget,
+    // explicit length guidance, and checkTruncation() so a future overrun
+    // fails clearly instead of as a pile of "expected string, received
+    // undefined" errors on whichever variant got cut off mid-object.
+    const response = await this.client.messages.create({
+      model: this.model,
+      max_tokens: 16000,
+      system: [
+        `Write 3 sales-page variants for "${input.title}" — same offer, three honest positioning angles.`,
+        `AUDIENCE: ${input.audience}`,
+        `TRANSFORMATION: ${input.transformation}`,
+        `THE OFFER — promise: ${input.offer.promise}`,
+        `MECHANISM: ${input.offer.mechanism}`,
+        `BONUSES: ${input.offer.bonuses.join(" | ")}`,
+        `GUARANTEE: ${input.offer.guaranteeText}`,
+        `PRICE TIERS: ${input.offer.priceTiers.map((t) => `${t.name} (${t.price})`).join(", ")}`,
+        "Each variant must be genuinely different in angle, not the same copy relabeled — outcome leads with the result, pain leads with the problem, identity leads with who the buyer becomes.",
+        "Keep each copy field focused — a few sentences to a short paragraph, not an essay. Depth of distinctiveness between variants matters more than length within one.",
+      ].join("\n"),
+      tools: [GENERATE_SALES_PAGES_TOOL],
+      tool_choice: { type: "tool", name: "generate_sales_pages" },
+      messages: [{ role: "user", content: "Write all 3 variants now." }],
+    });
+    checkTruncation(response);
+    const toolUse = response.content.find((b) => b.type === "tool_use");
+    if (!toolUse || toolUse.type !== "tool_use") {
+      throw new Error("Claude did not return a generate_sales_pages tool call.");
+    }
+    return SalesPageOutputSchema.parse(toolUse.input) satisfies SalesPageOutput;
   }
 }

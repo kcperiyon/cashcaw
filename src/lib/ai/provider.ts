@@ -6,9 +6,8 @@
 // phase-slice at a time rather than speculatively.
 //
 // Phase 1 slice 1 added the Expertise Interview + Opportunity Finder.
-// Phase 1 slice 2 (this pass) adds the Product Factory: turning a selected
-// Opportunity into an actual course/ebook/template-pack, format chosen by
-// the AI from the opportunity itself, not the founder guessing.
+// Phase 1 slice 2 added the Product Factory. Phase 1 slice 3 (this pass)
+// adds the Offer Builder + Sales Page generator.
 
 export interface BusinessAIProvider {
   readonly id: string;
@@ -49,6 +48,27 @@ export interface BusinessAIProvider {
    * (turn an outline into real content) with a different final render.
    */
   generateProductContent(input: ContentInput): Promise<ContentOutput>;
+
+  /**
+   * Builds the commercial offer around a generated product: the promise,
+   * the mechanism (why this specific approach works), bonuses, a guarantee,
+   * and three price tiers. One offer per product — this is deliberately not
+   * re-run per sales-page variant, since the underlying deal doesn't change
+   * with positioning, only how it's framed.
+   */
+  generateOffer(input: OfferInput): Promise<OfferOutput>;
+
+  /**
+   * Three sales-page variants, each a different honest positioning angle on
+   * the SAME offer (outcome-driven / pain-driven / identity-driven), not
+   * three different offers. clarityScore is the AI's own subjective
+   * judgment of how clearly this variant's promise lands for the stated
+   * audience — deliberately NOT a weighted formula like opportunity
+   * scoring, since sales-copy quality has no equivalent objective inputs to
+   * weight. Presenting it as anything more precise than "the model's own
+   * read" would be false rigor.
+   */
+  generateSalesPages(input: SalesPageInput): Promise<SalesPageOutput>;
 }
 
 export interface InterviewTurnInput {
@@ -125,3 +145,55 @@ export type ContentOutput =
   | { format: "course"; modules: CourseModule[] }
   | { format: "ebook"; sections: FlatSection[] }
   | { format: "template"; sections: FlatSection[] };
+
+export interface PriceTier {
+  name: string;
+  price: string;
+  description: string;
+}
+
+export interface OfferInput {
+  title: string;
+  audience: string;
+  transformation: string;
+  outline: string[];
+}
+
+export interface OfferOutput {
+  promise: string;
+  mechanism: string;
+  bonuses: string[];
+  guaranteeText: string;
+  priceTiers: PriceTier[];
+}
+
+export interface SalesPageInput {
+  title: string;
+  audience: string;
+  transformation: string;
+  offer: OfferOutput;
+}
+
+export interface SalesPageCopy {
+  problemAgitation: string;
+  mechanismExplainer: string;
+  whatsIncluded: string;
+  bonusesText: string;
+  guaranteeText: string;
+  faq: { question: string; answer: string }[];
+  cta: string;
+}
+
+export interface SalesPageVariant {
+  positioning: "outcome" | "pain" | "identity";
+  headline: string;
+  subheadline: string;
+  copy: SalesPageCopy;
+  /** AI's own subjective read, 0-100 — see generateSalesPages()'s doc comment for why this is never a computed formula. */
+  clarityScore: number;
+  rationale: string;
+}
+
+export interface SalesPageOutput {
+  variants: SalesPageVariant[];
+}
