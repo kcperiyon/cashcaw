@@ -2,6 +2,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
 import type {
   BusinessAIProvider,
+  AiUsage,
   BlueprintInput,
   BlueprintOutput,
   ContentInput,
@@ -362,6 +363,7 @@ export class ClaudeBusinessProvider implements BusinessAIProvider {
   readonly id = "claude";
   private client: Anthropic;
   private model: string;
+  private lastUsage: AiUsage | null = null;
 
   // `||` not `??`: an env var present but set to "" must fall through to the
   // default too, not stick as "" — see the Closa CLOSA_CLAUDE_MODEL bug this
@@ -374,8 +376,29 @@ export class ClaudeBusinessProvider implements BusinessAIProvider {
     this.model = model;
   }
 
+  getLastUsage(): AiUsage | null {
+    return this.lastUsage;
+  }
+
+  /**
+   * Every one of this class's 7 messages.create() call sites goes through
+   * here instead of calling this.client.messages.create() directly, so
+   * usage tracking can never be forgotten on a new method the way
+   * checkTruncation() was forgotten on generateSalesPages() earlier in this
+   * project — one chokepoint instead of a convention to remember per call.
+   */
+  private async create(params: Anthropic.MessageCreateParamsNonStreaming): Promise<Anthropic.Message> {
+    const response = await this.client.messages.create(params);
+    this.lastUsage = {
+      model: response.model,
+      tokensIn: response.usage.input_tokens,
+      tokensOut: response.usage.output_tokens,
+    };
+    return response;
+  }
+
   async generateInterviewTurn(input: InterviewTurnInput): Promise<InterviewTurnOutput> {
-    const response = await this.client.messages.create({
+    const response = await this.create({
       model: this.model,
       max_tokens: 600,
       system:
@@ -399,7 +422,7 @@ export class ClaudeBusinessProvider implements BusinessAIProvider {
   }
 
   async proposeOpportunities(input: OpportunityInput): Promise<OpportunityOutput> {
-    const response = await this.client.messages.create({
+    const response = await this.create({
       model: this.model,
       max_tokens: 3000,
       system: [
@@ -423,7 +446,7 @@ export class ClaudeBusinessProvider implements BusinessAIProvider {
   }
 
   async generateProductBlueprint(input: BlueprintInput): Promise<BlueprintOutput> {
-    const response = await this.client.messages.create({
+    const response = await this.create({
       model: this.model,
       max_tokens: 1200,
       system: [
@@ -473,7 +496,7 @@ export class ClaudeBusinessProvider implements BusinessAIProvider {
     ].join("\n");
 
     if (input.format === "course") {
-      const response = await this.client.messages.create({
+      const response = await this.create({
         model: this.model,
         max_tokens: 16000,
         system: system + "\nKeep lessons per module to 2-3 — depth over quantity.",
@@ -490,7 +513,7 @@ export class ClaudeBusinessProvider implements BusinessAIProvider {
       return { format: "course", modules };
     }
 
-    const response = await this.client.messages.create({
+    const response = await this.create({
       model: this.model,
       max_tokens: 16000,
       system,
@@ -508,7 +531,7 @@ export class ClaudeBusinessProvider implements BusinessAIProvider {
   }
 
   async generateOffer(input: OfferInput): Promise<OfferOutput> {
-    const response = await this.client.messages.create({
+    const response = await this.create({
       model: this.model,
       max_tokens: 1500,
       system: [
@@ -537,7 +560,7 @@ export class ClaudeBusinessProvider implements BusinessAIProvider {
     // explicit length guidance, and checkTruncation() so a future overrun
     // fails clearly instead of as a pile of "expected string, received
     // undefined" errors on whichever variant got cut off mid-object.
-    const response = await this.client.messages.create({
+    const response = await this.create({
       model: this.model,
       max_tokens: 16000,
       system: [

@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { getCurrentUser } from "@/lib/auth/current-user";
 import { withOrgScope } from "@/lib/tenant-db";
-import { getBusinessAIProvider } from "@/lib/ai";
+import { meterAiCall } from "@/lib/ai/metering";
 
 const CreateSchema = z.object({ opportunityId: z.string().min(1) });
 
@@ -46,9 +46,11 @@ export async function POST(request: Request) {
 
   let blueprint;
   try {
-    blueprint = await getBusinessAIProvider().generateProductBlueprint({
-      opportunity: { title: opportunity.title, audience: opportunity.audience, problem: opportunity.problem },
-    });
+    blueprint = await meterAiCall(user.organizationId, "product_blueprint", (provider) =>
+      provider.generateProductBlueprint({
+        opportunity: { title: opportunity.title, audience: opportunity.audience, problem: opportunity.problem },
+      })
+    );
   } catch (err) {
     const message = err instanceof Error ? err.message : "Could not generate a product blueprint right now.";
     return NextResponse.json({ error: message }, { status: 502 });

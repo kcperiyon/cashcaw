@@ -44,6 +44,8 @@ model Organization {
   opportunities     Opportunity[]
   products          Product[]
   offers            Offer[]
+  creditWallet      AiCreditWallet?
+  usageLogs         AiUsageLog[]
 }
 
 model User {
@@ -304,4 +306,35 @@ model SalesPage {
   offer Offer @relation(fields: [offerId], references: [id])
 
   @@index([offerId])
+}
+
+// One wallet per org, seeded with a starter balance on signup (see
+// src/app/api/auth/signup/route.ts) — a real free-tier allowance, not a
+// placeholder. Balance changes only ever happen through
+// src/lib/ai/metering.ts's meterAiCall(), never a direct update elsewhere.
+model AiCreditWallet {
+  id             String   @id @default(cuid())
+  organizationId String   @unique
+  balance        Int      @default(0)
+  updatedAt      DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+}
+
+// Every metered AI call writes one row here, whether or not it succeeded in
+// deducting cleanly — this is the audit trail credit billing (once
+// Checkout exists) will read, and what a future wallet/usage page shows.
+model AiUsageLog {
+  id             String   @id @default(cuid())
+  organizationId String
+  task           String
+  model          String
+  tokensIn       Int
+  tokensOut      Int
+  creditsCharged Int
+  createdAt      DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+
+  @@index([organizationId, createdAt])
 }

@@ -6,8 +6,16 @@
 // phase-slice at a time rather than speculatively.
 //
 // Phase 1 slice 1 added the Expertise Interview + Opportunity Finder.
-// Phase 1 slice 2 added the Product Factory. Phase 1 slice 3 (this pass)
-// adds the Offer Builder + Sales Page generator.
+// Phase 1 slice 2 added the Product Factory. Phase 1 slice 3 added the
+// Offer Builder + Sales Page generator. Phase 1 slice 4 (this pass) adds
+// AI-credit metering — the part of "Checkout, delivery, credit metering"
+// that doesn't need the (deliberately deferred) Flutterwave account.
+
+export interface AiUsage {
+  model: string;
+  tokensIn: number;
+  tokensOut: number;
+}
 
 export interface BusinessAIProvider {
   readonly id: string;
@@ -69,6 +77,17 @@ export interface BusinessAIProvider {
    * read" would be false rigor.
    */
   generateSalesPages(input: SalesPageInput): Promise<SalesPageOutput>;
+
+  /**
+   * Token usage from the most recently completed generate*() call on this
+   * provider INSTANCE, or null before any call has run. A fresh provider
+   * is constructed per request (see getBusinessAIProvider()), so there's
+   * no cross-request leakage — this is a request-scoped side channel for
+   * metering, not shared state. Every provider must report this, since
+   * credit metering is a real product requirement independent of which
+   * model backs a given account.
+   */
+  getLastUsage(): AiUsage | null;
 }
 
 export interface InterviewTurnInput {

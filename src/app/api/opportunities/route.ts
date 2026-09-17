@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth/current-user";
 import { withOrgScope } from "@/lib/tenant-db";
-import { getBusinessAIProvider } from "@/lib/ai";
+import { meterAiCall } from "@/lib/ai/metering";
 import { scoreOpportunities } from "@/lib/methodology/scoring";
 
 /** Lists this org's opportunities, highest-scored first. */
@@ -43,9 +43,9 @@ export async function POST() {
 
   let proposed;
   try {
-    proposed = await getBusinessAIProvider().proposeOpportunities({
-      expertiseFacts: facts.map((f) => f.content),
-    });
+    proposed = await meterAiCall(user.organizationId, "opportunity_generation", (provider) =>
+      provider.proposeOpportunities({ expertiseFacts: facts.map((f) => f.content) })
+    );
   } catch (err) {
     const message = err instanceof Error ? err.message : "Could not generate opportunities right now.";
     return NextResponse.json({ error: message }, { status: 502 });

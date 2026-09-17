@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import type { Prisma } from "@/generated/prisma/client";
 import { getCurrentUser } from "@/lib/auth/current-user";
 import { withOrgScope } from "@/lib/tenant-db";
-import { getBusinessAIProvider } from "@/lib/ai";
+import { meterAiCall } from "@/lib/ai/metering";
 
 /**
  * Generates the 3 sales-page variants for an offer. Re-posting wipes and
@@ -21,18 +21,20 @@ export async function POST(_request: Request, { params }: { params: Promise<{ id
 
   let output;
   try {
-    output = await getBusinessAIProvider().generateSalesPages({
-      title: offer.product.title,
-      audience: offer.product.audience,
-      transformation: offer.product.transformation,
-      offer: {
-        promise: offer.promise,
-        mechanism: offer.mechanism,
-        bonuses: offer.bonusesJson as string[],
-        guaranteeText: offer.guaranteeText,
-        priceTiers: offer.priceTiersJson as { name: string; price: string; description: string }[],
-      },
-    });
+    output = await meterAiCall(user.organizationId, "sales_pages", (provider) =>
+      provider.generateSalesPages({
+        title: offer.product.title,
+        audience: offer.product.audience,
+        transformation: offer.product.transformation,
+        offer: {
+          promise: offer.promise,
+          mechanism: offer.mechanism,
+          bonuses: offer.bonusesJson as string[],
+          guaranteeText: offer.guaranteeText,
+          priceTiers: offer.priceTiersJson as { name: string; price: string; description: string }[],
+        },
+      })
+    );
   } catch (err) {
     const message = err instanceof Error ? err.message : "Could not generate sales pages right now.";
     return NextResponse.json({ error: message }, { status: 502 });

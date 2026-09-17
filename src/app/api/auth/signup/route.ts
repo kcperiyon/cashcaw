@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import { hashPassword } from "@/lib/auth/password";
 import { createSessionToken, SESSION_COOKIE, SESSION_COOKIE_MAX_AGE } from "@/lib/auth/session";
 import { slugify } from "@/lib/slug";
+import { SIGNUP_STARTER_CREDITS } from "@/lib/ai/metering";
 
 const SignupSchema = z.object({
   organizationName: z.string().min(2).max(120),
@@ -51,6 +52,9 @@ export async function POST(request: Request) {
 
       await tx.orgMembership.create({
         data: { organizationId: org.id, userId: user.id, role: "owner" },
+      });
+      await tx.aiCreditWallet.create({
+        data: { organizationId: org.id, balance: SIGNUP_STARTER_CREDITS },
       });
 
       return { id: org.id, userId: user.id };

@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import type { Prisma } from "@/generated/prisma/client";
 import { getCurrentUser } from "@/lib/auth/current-user";
 import { withOrgScope } from "@/lib/tenant-db";
-import { getBusinessAIProvider } from "@/lib/ai";
+import { meterAiCall } from "@/lib/ai/metering";
 
 /** Fetches the product's offer, with its sales-page variants if any exist. */
 export async function GET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -43,12 +43,14 @@ export async function POST(_request: Request, { params }: { params: Promise<{ id
 
   let offerOutput;
   try {
-    offerOutput = await getBusinessAIProvider().generateOffer({
-      title: product.title,
-      audience: product.audience,
-      transformation: product.transformation,
-      outline: product.outlineJson as string[],
-    });
+    offerOutput = await meterAiCall(user.organizationId, "offer", (provider) =>
+      provider.generateOffer({
+        title: product.title,
+        audience: product.audience,
+        transformation: product.transformation,
+        outline: product.outlineJson as string[],
+      })
+    );
   } catch (err) {
     const message = err instanceof Error ? err.message : "Could not build the offer right now.";
     return NextResponse.json({ error: message }, { status: 502 });

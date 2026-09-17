@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth/current-user";
 import { withOrgScope } from "@/lib/tenant-db";
-import { getBusinessAIProvider } from "@/lib/ai";
+import { meterAiCall } from "@/lib/ai/metering";
 
 /**
  * The actual content-generation step. Idempotent-ish on purpose: re-running
@@ -21,13 +21,15 @@ export async function POST(_request: Request, { params }: { params: Promise<{ id
 
   let content;
   try {
-    content = await getBusinessAIProvider().generateProductContent({
-      format: product.format,
-      title: product.title,
-      audience: product.audience,
-      transformation: product.transformation,
-      outline: product.outlineJson as string[],
-    });
+    content = await meterAiCall(user.organizationId, "product_content", (provider) =>
+      provider.generateProductContent({
+        format: product.format,
+        title: product.title,
+        audience: product.audience,
+        transformation: product.transformation,
+        outline: product.outlineJson as string[],
+      })
+    );
   } catch (err) {
     const message = err instanceof Error ? err.message : "Could not generate content right now.";
     return NextResponse.json({ error: message }, { status: 502 });

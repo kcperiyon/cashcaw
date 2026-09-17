@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { getCurrentUser } from "@/lib/auth/current-user";
 import { withOrgScope } from "@/lib/tenant-db";
-import { getBusinessAIProvider } from "@/lib/ai";
+import { meterAiCall } from "@/lib/ai/metering";
 
 const TurnSchema = z.object({ founderMessage: z.string().min(1).max(4000) });
 
@@ -46,10 +46,12 @@ export async function POST(request: Request) {
 
   let turn;
   try {
-    turn = await getBusinessAIProvider().generateInterviewTurn({
-      history: history.map((m) => ({ role: m.role, content: m.content })),
-      founderMessage,
-    });
+    turn = await meterAiCall(user.organizationId, "interview_turn", (provider) =>
+      provider.generateInterviewTurn({
+        history: history.map((m) => ({ role: m.role, content: m.content })),
+        founderMessage,
+      })
+    );
   } catch (err) {
     const message = err instanceof Error ? err.message : "The interviewer is unavailable right now.";
     return NextResponse.json({ error: message }, { status: 502 });
