@@ -46,6 +46,7 @@ model Organization {
   offers            Offer[]
   creditWallet      AiCreditWallet?
   usageLogs         AiUsageLog[]
+  repurposedAssets  RepurposedAsset[]
 }
 
 model User {
@@ -208,6 +209,7 @@ model Product {
   modules      Module[]
   sections     ContentSection[]
   offer        Offer?
+  repurposedAssets RepurposedAsset[]
 
   @@index([organizationId])
 }
@@ -337,4 +339,31 @@ model AiUsageLog {
   organization Organization @relation(fields: [organizationId], references: [id])
 
   @@index([organizationId, createdAt])
+}
+
+enum RepurposeAssetType {
+  lead_magnet
+  email_sequence
+  social_posts
+  webinar_script
+}
+
+// One IP -> many assets. Deliberately NOT one-per-type like Offer — a
+// founder regenerating "social posts" almost always wants a NEW batch
+// alongside the old one (a different campaign), not a replacement, unlike
+// Offer/content where regeneration means "I want a fresh pass on the same
+// thing." Rows accumulate; the UI groups by type.
+model RepurposedAsset {
+  id             String             @id @default(cuid())
+  organizationId String
+  productId      String
+  type           RepurposeAssetType
+  title          String
+  contentJson    Json
+  createdAt      DateTime           @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  product      Product      @relation(fields: [productId], references: [id])
+
+  @@index([productId, type])
 }

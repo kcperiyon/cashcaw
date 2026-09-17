@@ -13,6 +13,8 @@ import type {
   OfferOutput,
   OpportunityInput,
   OpportunityOutput,
+  RepurposeInput,
+  RepurposeOutput,
   SalesPageInput,
   SalesPageOutput,
 } from "@/lib/ai/provider";
@@ -54,7 +56,21 @@ function recoverArray<T extends z.ZodTypeAny>(itemSchema: T, { allowEmpty = fals
       try {
         return JSON.parse(trimmed);
       } catch {
-        // fall through
+        // A real observed failure mode (a repurposed webinar script, live):
+        // the model wrote a genuinely complete, valid array, then appended
+        // stray trailing content after the closing bracket — direct parse
+        // fails with "unexpected character after JSON" even though a real
+        // array is right there. Slice to the outermost [...] pair and retry
+        // before giving up on this being an array at all.
+        const start = trimmed.indexOf("[");
+        const end = trimmed.lastIndexOf("]");
+        if (start !== -1 && end > start) {
+          try {
+            return JSON.parse(trimmed.slice(start, end + 1));
+          } catch {
+            // fall through
+          }
+        }
       }
     }
     try {
@@ -151,6 +167,26 @@ const SalesPageVariantSchema = z.object({
 const SalesPageOutputSchema = z.object({ variants: recoverArray(SalesPageVariantSchema) });
 
 const FlatContentSchema = z.object({
+  sections: recoverArray(z.object({ title: z.string(), content: z.string() })),
+});
+
+const LeadMagnetSchema = z.object({ title: z.string(), body: z.string() });
+const EmailSequenceSchema = z.object({ emails: recoverArray(z.object({ subject: z.string(), body: z.string() })) });
+const SocialPostsSchema = z.object({ posts: recoverArray(z.object({ platform: z.string(), content: z.string() })) });
+// `title` is optional here — a real live run produced a genuinely excellent,
+// complete 6-section script but omitted the top-level title entirely
+// (attention apparently went into the string-encoded sections instead).
+// The content is real and usable; losing it over one missing label would
+// be a worse failure than substituting a fallback title at the call site.
+// `content`, not `script` — a live run repeatedly mishandled a nested
+// object field literally named "script" when the task itself was "write
+// the webinar script" (wrong key entirely one run, missing value another).
+// Renamed to match the exact field name already proven 100% reliable
+// elsewhere in this file (FlatContentSchema's sections, CourseContentSchema's
+// lessons) — the working hypothesis is the key colliding with the task's
+// own action word was the actual cause, not a one-off model hiccup.
+const WebinarScriptSchema = z.object({
+  title: z.string().optional(),
   sections: recoverArray(z.object({ title: z.string(), content: z.string() })),
 });
 
@@ -281,6 +317,89 @@ const GENERATE_FLAT_CONTENT_TOOL = {
       },
     },
     required: ["sections"],
+  },
+};
+
+const REPURPOSE_LEAD_MAGNET_TOOL = {
+  name: "repurpose_lead_magnet",
+  description: "A short standalone lead magnet grounded in the source product's real content.",
+  input_schema: {
+    type: "object" as const,
+    properties: {
+      title: { type: "string" },
+      body: { type: "string", description: "The actual finished lead-magnet text (a short, complete PDF-shaped document) — real content, not a summary of what it would contain." },
+    },
+    required: ["title", "body"],
+  },
+};
+
+const REPURPOSE_EMAIL_SEQUENCE_TOOL = {
+  name: "repurpose_email_sequence",
+  description: "A 3-5 email nurture/launch sequence grounded in the source product's real content.",
+  input_schema: {
+    type: "object" as const,
+    properties: {
+      emails: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            subject: { type: "string" },
+            body: { type: "string", description: "The actual finished email body, ready to send — not an outline of one." },
+          },
+          required: ["subject", "body"],
+        },
+        description: "3-5 emails, in send order.",
+      },
+    },
+    required: ["emails"],
+  },
+};
+
+const REPURPOSE_SOCIAL_POSTS_TOOL = {
+  name: "repurpose_social_posts",
+  description: "A batch of platform-specific social posts grounded in the source product's real content.",
+  input_schema: {
+    type: "object" as const,
+    properties: {
+      posts: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            platform: { type: "string", description: "e.g. LinkedIn, X, Instagram — vary the platform across the batch, don't repeat the same post reformatted." },
+            content: { type: "string", description: "The actual finished post text, ready to publish." },
+          },
+          required: ["platform", "content"],
+        },
+        description: "5-8 distinct posts, each a genuinely different angle on the source content, not the same post reworded.",
+      },
+    },
+    required: ["posts"],
+  },
+};
+
+const REPURPOSE_WEBINAR_SCRIPT_TOOL = {
+  name: "repurpose_webinar_script",
+  description: "A presentable webinar script grounded in the source product's real content.",
+  input_schema: {
+    type: "object" as const,
+    properties: {
+      title: { type: "string" },
+      sections: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            title: { type: "string" },
+            content: { type: "string", description: "The actual presenter script for this section — real spoken-style content, not a bullet outline." },
+          },
+          required: ["title", "content"],
+        },
+        description: "4-6 sections covering hook, problem, solution/mechanism, proof, offer, close. Each section is an OBJECT with a title and content field — never a plain string, never a JSON string.",
+      },
+    },
+    required: ["title", "sections"],
   },
 };
 
@@ -585,5 +704,78 @@ export class ClaudeBusinessProvider implements BusinessAIProvider {
       throw new Error("Claude did not return a generate_sales_pages tool call.");
     }
     return SalesPageOutputSchema.parse(toolUse.input) satisfies SalesPageOutput;
+  }
+
+  async generateRepurposedAsset(input: RepurposeInput): Promise<RepurposeOutput> {
+    const system = [
+      `Repurpose "${input.sourceTitle}" into a ${input.targetType.replace("_", " ")}.`,
+      `AUDIENCE: ${input.sourceAudience}`,
+      `TRANSFORMATION: ${input.sourceTransformation}`,
+      `SOURCE CONTENT (ground the repurposed asset in these ACTUAL specifics, not just the title/audience above):\n${input.sourceContentSummary}`,
+      "This is a genuinely different asset for a different moment in the funnel, not the source content copy-pasted or lightly reformatted — extract the ideas, re-express them for this format.",
+    ].join("\n");
+
+    if (input.targetType === "lead_magnet") {
+      const response = await this.create({
+        model: this.model,
+        max_tokens: 3000,
+        system,
+        tools: [REPURPOSE_LEAD_MAGNET_TOOL],
+        tool_choice: { type: "tool", name: "repurpose_lead_magnet" },
+        messages: [{ role: "user", content: "Write the lead magnet now." }],
+      });
+      checkTruncation(response);
+      const toolUse = response.content.find((b) => b.type === "tool_use");
+      if (!toolUse || toolUse.type !== "tool_use") throw new Error("Claude did not return a repurpose_lead_magnet tool call.");
+      const leadMagnet = LeadMagnetSchema.parse(toolUse.input);
+      return { targetType: "lead_magnet", leadMagnet };
+    }
+
+    if (input.targetType === "email_sequence") {
+      const response = await this.create({
+        model: this.model,
+        max_tokens: 4000,
+        system,
+        tools: [REPURPOSE_EMAIL_SEQUENCE_TOOL],
+        tool_choice: { type: "tool", name: "repurpose_email_sequence" },
+        messages: [{ role: "user", content: "Write the email sequence now." }],
+      });
+      checkTruncation(response);
+      const toolUse = response.content.find((b) => b.type === "tool_use");
+      if (!toolUse || toolUse.type !== "tool_use") throw new Error("Claude did not return a repurpose_email_sequence tool call.");
+      const emailSequence = EmailSequenceSchema.parse(toolUse.input);
+      return { targetType: "email_sequence", emailSequence };
+    }
+
+    if (input.targetType === "social_posts") {
+      const response = await this.create({
+        model: this.model,
+        max_tokens: 4000,
+        system,
+        tools: [REPURPOSE_SOCIAL_POSTS_TOOL],
+        tool_choice: { type: "tool", name: "repurpose_social_posts" },
+        messages: [{ role: "user", content: "Write the social posts now." }],
+      });
+      checkTruncation(response);
+      const toolUse = response.content.find((b) => b.type === "tool_use");
+      if (!toolUse || toolUse.type !== "tool_use") throw new Error("Claude did not return a repurpose_social_posts tool call.");
+      const socialPosts = SocialPostsSchema.parse(toolUse.input);
+      return { targetType: "social_posts", socialPosts };
+    }
+
+    const response = await this.create({
+      model: this.model,
+      max_tokens: 6000,
+      system,
+      tools: [REPURPOSE_WEBINAR_SCRIPT_TOOL],
+      tool_choice: { type: "tool", name: "repurpose_webinar_script" },
+      messages: [{ role: "user", content: "Write the webinar script now." }],
+    });
+    checkTruncation(response);
+    const toolUse = response.content.find((b) => b.type === "tool_use");
+    if (!toolUse || toolUse.type !== "tool_use") throw new Error("Claude did not return a repurpose_webinar_script tool call.");
+    const parsed = WebinarScriptSchema.parse(toolUse.input);
+    const webinarScript = { title: parsed.title ?? `${input.sourceTitle} — Webinar Script`, sections: parsed.sections };
+    return { targetType: "webinar_script", webinarScript };
   }
 }

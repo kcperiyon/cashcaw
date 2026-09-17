@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { AppNav } from "@/components/AppNav";
 import { OfferSection } from "./OfferSection";
+import { RepurposeSection } from "./RepurposeSection";
 
 type Lesson = { id: string; title: string; content: string; exercise: string };
 type Module = { id: string; title: string; lessons: Lesson[] };
@@ -133,7 +134,12 @@ export function ProductClient({ productId }: { productId: string }) {
         </div>
       )}
 
-      {product.status === "generated" && <OfferSection productId={product.id} />}
+      {product.status === "generated" && (
+        <>
+          <RepurposeSection productId={product.id} />
+          <OfferSection productId={product.id} />
+        </>
+      )}
     </main>
   );
 }

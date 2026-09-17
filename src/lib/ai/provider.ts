@@ -7,9 +7,11 @@
 //
 // Phase 1 slice 1 added the Expertise Interview + Opportunity Finder.
 // Phase 1 slice 2 added the Product Factory. Phase 1 slice 3 added the
-// Offer Builder + Sales Page generator. Phase 1 slice 4 (this pass) adds
-// AI-credit metering — the part of "Checkout, delivery, credit metering"
-// that doesn't need the (deliberately deferred) Flutterwave account.
+// Offer Builder + Sales Page generator. Phase 1 slice 4 added AI-credit
+// metering. Phase 2 slice 1 (this pass) adds the Repurposing Engine — the
+// part of Phase 2 that doesn't need a real purchase to exist yet (order
+// bump/upsell/ascension and video generation all wait on Checkout or a new
+// third-party video account, neither set up).
 
 export interface AiUsage {
   model: string;
@@ -77,6 +79,17 @@ export interface BusinessAIProvider {
    * read" would be false rigor.
    */
   generateSalesPages(input: SalesPageInput): Promise<SalesPageOutput>;
+
+  /**
+   * Turns an existing product's ACTUAL content into a different downstream
+   * asset — a lead magnet, an email sequence, a batch of social posts, or a
+   * webinar script — grounded in a real summary of the source content
+   * (see the caller's buildContentSummary()), not just the product's
+   * title/audience/transformation. One IP → many assets, per the standing
+   * "Product Repurposer" vision — one provider method with a discriminated
+   * output, same pattern as generateProductContent().
+   */
+  generateRepurposedAsset(input: RepurposeInput): Promise<RepurposeOutput>;
 
   /**
    * Token usage from the most recently completed generate*() call on this
@@ -216,3 +229,38 @@ export interface SalesPageVariant {
 export interface SalesPageOutput {
   variants: SalesPageVariant[];
 }
+
+export type RepurposeAssetType = "lead_magnet" | "email_sequence" | "social_posts" | "webinar_script";
+
+export interface RepurposeInput {
+  sourceTitle: string;
+  sourceAudience: string;
+  sourceTransformation: string;
+  /** A condensed, real summary of the source product's actual content (titles + excerpts) — see the caller's buildContentSummary(). Never just the blueprint metadata alone. */
+  sourceContentSummary: string;
+  targetType: RepurposeAssetType;
+}
+
+export interface LeadMagnetOutput {
+  title: string;
+  body: string;
+}
+
+export interface EmailSequenceOutput {
+  emails: { subject: string; body: string }[];
+}
+
+export interface SocialPostsOutput {
+  posts: { platform: string; content: string }[];
+}
+
+export interface WebinarScriptOutput {
+  title: string;
+  sections: { title: string; content: string }[];
+}
+
+export type RepurposeOutput =
+  | { targetType: "lead_magnet"; leadMagnet: LeadMagnetOutput }
+  | { targetType: "email_sequence"; emailSequence: EmailSequenceOutput }
+  | { targetType: "social_posts"; socialPosts: SocialPostsOutput }
+  | { targetType: "webinar_script"; webinarScript: WebinarScriptOutput };

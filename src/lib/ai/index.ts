@@ -18,6 +18,13 @@ export type {
   SalesPageInput,
   SalesPageOutput,
   PriceTier,
+  RepurposeAssetType,
+  RepurposeInput,
+  RepurposeOutput,
+  LeadMagnetOutput,
+  EmailSequenceOutput,
+  SocialPostsOutput,
+  WebinarScriptOutput,
 } from "@/lib/ai/provider";
 
 // Cheap fallback model used only when an org's credit wallet is at or below
