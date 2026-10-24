@@ -57,3 +57,39 @@ export async function getMembershipsForUser(userId: string) {
     })
   );
 }
+
+/**
+ * Public storefront lookup: names one exact slug so the Product
+ * public_storefront_lookup RLS policy exposes that single published row —
+ * the only way an unauthenticated request can learn which org owns it. Use
+ * it ONLY to resolve slug -> {id, organizationId}; further reads go through
+ * withOrgScope.
+ */
+export async function withPublicSlugScope<T>(
+  slug: string,
+  fn: (tx: Tx) => Promise<T>
+): Promise<T> {
+  return db.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT set_config('app.public_slug', ${slug}, true)`;
+    return fn(tx);
+  });
+}
+
+/**
+ * Buyer-side access to exactly one order, named by its id (provider
+ * callbacks) or its unguessable accessToken (delivery page). See the Order
+ * buyer_access RLS policy; OrderLine/PaymentTransaction/Enrollment follow the order.
+ */
+export async function withOrderScope<T>(
+  by: { id: string } | { token: string },
+  fn: (tx: Tx) => Promise<T>
+): Promise<T> {
+  return db.$transaction(async (tx) => {
+    if ("id" in by) {
+      await tx.$executeRaw`SELECT set_config('app.order_id', ${by.id}, true)`;
+    } else {
+      await tx.$executeRaw`SELECT set_config('app.order_token', ${by.token}, true)`;
+    }
+    return fn(tx);
+  });
+}

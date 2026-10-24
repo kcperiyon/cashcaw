@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { AppNav } from "@/components/AppNav";
 import { OfferSection } from "./OfferSection";
 import { RepurposeSection } from "./RepurposeSection";
+import { StorefrontSection } from "./StorefrontSection";
 
 type Lesson = { id: string; title: string; content: string; exercise: string };
 type Module = { id: string; title: string; lessons: Lesson[] };
@@ -17,6 +18,8 @@ type Product = {
   audience: string;
   transformation: string;
   outlineJson: string[];
+  publicSlug: string | null;
+  publishedAt: string | null;
   modules: Module[];
   sections: ContentSection[];
 };
@@ -138,6 +141,12 @@ export function ProductClient({ productId }: { productId: string }) {
         <>
           <RepurposeSection productId={product.id} />
           <OfferSection productId={product.id} />
+          <StorefrontSection
+            productId={product.id}
+            publicSlug={product.publicSlug}
+            published={product.publishedAt !== null}
+            onChange={load}
+          />
         </>
       )}
     </main>

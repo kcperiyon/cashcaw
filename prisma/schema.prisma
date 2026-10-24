@@ -47,6 +47,8 @@ model Organization {
   creditWallet      AiCreditWallet?
   usageLogs         AiUsageLog[]
   repurposedAssets  RepurposedAsset[]
+  orders            Order[]
+  enrollments       Enrollment[]
 }
 
 model User {
@@ -202,6 +204,11 @@ model Product {
   transformation String
   outlineJson    Json
   status         ProductStatus @default(draft)
+  // Public storefront: publishedAt != null means the sales page is live at
+  // /p/<publicSlug>. Unpublishing clears publishedAt but keeps the slug so a
+  // re-publish restores the same link.
+  publicSlug     String?       @unique
+  publishedAt    DateTime?
   createdAt      DateTime      @default(now())
 
   organization Organization @relation(fields: [organizationId], references: [id])
@@ -210,6 +217,9 @@ model Product {
   sections     ContentSection[]
   offer        Offer?
   repurposedAssets RepurposedAsset[]
+  orders       Order[]
+  orderLines   OrderLine[]
+  enrollments  Enrollment[]
 
   @@index([organizationId])
 }
@@ -366,4 +376,104 @@ model RepurposedAsset {
   product      Product      @relation(fields: [productId], references: [id])
 
   @@index([productId, type])
+}
+
+enum OrderStatus {
+  pending
+  paid
+  failed
+  refunded
+}
+
+// PRIMARY is the product the buyer came for; BUMP / UPSELL are reserved for
+// the funnel builder (Phase 2) so lines never need a schema change later.
+enum OrderLineKind {
+  primary
+  bump
+  upsell
+}
+
+enum PaymentTransactionStatus {
+  pending
+  succeeded
+  failed
+}
+
+// A buyer's purchase from a creator's storefront. Buyers are not users of
+// Cashcaw: they have no account, only an unguessable accessToken that is the
+// key to their delivery page (/access/<token>). Money is held as integer minor
+// units (cents/kobo) + an ISO currency code, never as a float.
+model Order {
+  id             String      @id @default(cuid())
+  organizationId String
+  productId      String
+  buyerEmail     String
+  buyerName      String
+  tierName       String
+  currency       String
+  totalMinor     Int
+  status         OrderStatus @default(pending)
+  accessToken    String      @unique
+  createdAt      DateTime    @default(now())
+  paidAt         DateTime?
+
+  organization Organization         @relation(fields: [organizationId], references: [id])
+  product      Product              @relation(fields: [productId], references: [id])
+  lines        OrderLine[]
+  transactions PaymentTransaction[]
+  enrollments  Enrollment[]
+
+  @@index([organizationId, createdAt])
+  @@index([productId])
+}
+
+model OrderLine {
+  id          String        @id @default(cuid())
+  orderId     String
+  productId   String
+  kind        OrderLineKind @default(primary)
+  name        String
+  amountMinor Int
+
+  order   Order   @relation(fields: [orderId], references: [id])
+  product Product @relation(fields: [productId], references: [id])
+
+  @@index([orderId])
+}
+
+// One row per payment attempt with a provider. (provider, providerRef) is
+// unique so a replayed webhook/callback can never be recorded or credited twice.
+model PaymentTransaction {
+  id          String                   @id @default(cuid())
+  orderId     String
+  provider    String
+  providerRef String
+  status      PaymentTransactionStatus @default(pending)
+  amountMinor Int
+  currency    String
+  rawJson     Json?
+  createdAt   DateTime                 @default(now())
+
+  order Order @relation(fields: [orderId], references: [id])
+
+  @@unique([provider, providerRef])
+  @@index([orderId])
+}
+
+// Created when an order is paid: the durable "this buyer owns this product"
+// record, one per product so bundles/upsells work without a schema change.
+model Enrollment {
+  id             String   @id @default(cuid())
+  organizationId String
+  orderId        String
+  productId      String
+  buyerEmail     String
+  createdAt      DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  order        Order        @relation(fields: [orderId], references: [id])
+  product      Product      @relation(fields: [productId], references: [id])
+
+  @@unique([orderId, productId])
+  @@index([organizationId])
 }
