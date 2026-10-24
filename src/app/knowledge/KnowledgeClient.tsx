@@ -2,6 +2,8 @@
 
 import { useEffect, useState, type FormEvent } from "react";
 import { AppNav } from "@/components/AppNav";
+import { LinkButton } from "@/components/InlineForm";
+import { sendJson } from "@/lib/client-api";
 
 type KnowledgeSource = { id: string; name: string; kind: string; createdAt: string };
 type KnowledgeChunk = { content: string; source: string; score: number };
@@ -51,6 +53,17 @@ export function KnowledgeClient() {
     setName("");
     setText("");
     setIngesting(false);
+    await loadSources();
+  }
+
+  async function handleDelete(source: KnowledgeSource) {
+    if (!window.confirm(`Remove "${source.name}" from your knowledge base?`)) return;
+    setIngestError(null);
+    const result = await sendJson(`/api/knowledge/${source.id}`, "DELETE");
+    if (!result.ok) {
+      setIngestError(result.error);
+      return;
+    }
     await loadSources();
   }
 
@@ -123,8 +136,13 @@ export function KnowledgeClient() {
         ) : (
           <ul className="space-y-2">
             {sources.map((s) => (
-              <li key={s.id} className="text-sm text-neutral-700">
-                {s.name} <span className="text-neutral-400">— {s.kind}</span>
+              <li key={s.id} className="flex items-center justify-between gap-3 text-sm text-neutral-700">
+                <span>
+                  {s.name} <span className="text-neutral-400">— {s.kind}</span>
+                </span>
+                <LinkButton danger onClick={() => handleDelete(s)}>
+                  Delete
+                </LinkButton>
               </li>
             ))}
           </ul>

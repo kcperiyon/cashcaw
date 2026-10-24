@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AppNav } from "@/components/AppNav";
+import { LinkButton } from "@/components/InlineForm";
+import { sendJson } from "@/lib/client-api";
 
 type Opportunity = {
   id: string;
@@ -54,6 +56,17 @@ export function OpportunitiesClient() {
 
   async function handleSelect(id: string) {
     await fetch(`/api/opportunities/${id}/select`, { method: "POST" });
+    await load();
+  }
+
+  async function handleDelete(o: Opportunity) {
+    if (!window.confirm(`Delete the opportunity "${o.title}"?`)) return;
+    setError(null);
+    const result = await sendJson(`/api/opportunities/${o.id}`, "DELETE");
+    if (!result.ok) {
+      setError(result.error);
+      return;
+    }
     await load();
   }
 
@@ -136,6 +149,9 @@ export function OpportunitiesClient() {
                 >
                   {building === o.id ? "Choosing format…" : "Build this →"}
                 </button>
+                <LinkButton danger onClick={() => handleDelete(o)}>
+                  Delete
+                </LinkButton>
               </div>
             </li>
           ))}

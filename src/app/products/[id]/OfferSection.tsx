@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { InlineForm, LinkButton } from "@/components/InlineForm";
+import { formatFaq, parseFaq, sendJson } from "@/lib/client-api";
 
 type PriceTier = { name: string; price: string; description: string };
 type SalesPageCopy = {
@@ -44,6 +46,15 @@ export function OfferSection({ productId }: { productId: string }) {
   const [generatingPages, setGeneratingPages] = useState(false);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [editing, setEditing] = useState<string | null>(null);
+
+  async function saveJson(url: string, body: unknown): Promise<string | null> {
+    const result = await sendJson(url, "PATCH", body);
+    if (!result.ok) return result.error;
+    setEditing(null);
+    await load();
+    return null;
+  }
 
   async function load() {
     const res = await fetch(`/api/products/${productId}/offer`);
@@ -106,7 +117,41 @@ export function OfferSection({ productId }: { productId: string }) {
         </button>
       ) : (
         <>
+          {editing === "offer" ? (
+            <div className="mb-6">
+              <InlineForm
+                fields={[
+                  { key: "promise", label: "Promise", value: offer.promise, rows: 2 },
+                  { key: "mechanism", label: "Mechanism", value: offer.mechanism, rows: 3 },
+                  { key: "bonuses", label: "Bonuses (one per line)", value: offer.bonusesJson.join("\n"), rows: 4 },
+                  { key: "guaranteeText", label: "Guarantee", value: offer.guaranteeText, rows: 2 },
+                  ...offer.priceTiersJson.flatMap((t, i) => [
+                    { key: `t${i}name`, label: `Tier ${i + 1} name`, value: t.name },
+                    { key: `t${i}price`, label: `Tier ${i + 1} price (e.g. $97 or ₦15,000)`, value: t.price },
+                    { key: `t${i}desc`, label: `Tier ${i + 1} description`, value: t.description },
+                  ]),
+                ]}
+                onSave={(v) =>
+                  saveJson(`/api/offers/${offer.id}`, {
+                    promise: v.promise,
+                    mechanism: v.mechanism,
+                    guaranteeText: v.guaranteeText,
+                    bonuses: v.bonuses.split("\n").map((b) => b.trim()).filter(Boolean),
+                    priceTiers: offer.priceTiersJson.map((_, i) => ({
+                      name: v[`t${i}name`],
+                      price: v[`t${i}price`],
+                      description: v[`t${i}desc`],
+                    })),
+                  })
+                }
+                onCancel={() => setEditing(null)}
+              />
+            </div>
+          ) : (
           <div className="mb-6 rounded-lg border border-neutral-200 bg-white p-5">
+            <div className="mb-2 flex justify-end gap-3">
+              <LinkButton onClick={() => setEditing("offer")}>Edit offer</LinkButton>
+            </div>
             <p className="mb-2 text-sm text-neutral-800">
               <strong>Promise:</strong> {offer.promise}
             </p>
@@ -132,6 +177,7 @@ export function OfferSection({ productId }: { productId: string }) {
               ))}
             </div>
           </div>
+          )}
 
           {offer.salesPages.length === 0 ? (
             <button
@@ -143,7 +189,43 @@ export function OfferSection({ productId }: { productId: string }) {
             </button>
           ) : (
             <div className="space-y-4">
-              {offer.salesPages.map((page) => (
+              {offer.salesPages.map((page) => editing === `page:${page.id}` ? (
+                <InlineForm
+                  key={page.id}
+                  fields={[
+                    { key: "headline", label: "Headline", value: page.headline },
+                    { key: "subheadline", label: "Subheadline", value: page.subheadline, rows: 2 },
+                    { key: "problemAgitation", label: "Problem", value: page.copyJson.problemAgitation, rows: 4 },
+                    { key: "mechanismExplainer", label: "Why it works", value: page.copyJson.mechanismExplainer, rows: 4 },
+                    { key: "whatsIncluded", label: "What's included", value: page.copyJson.whatsIncluded, rows: 4 },
+                    { key: "bonusesText", label: "Bonuses text", value: page.copyJson.bonusesText, rows: 3 },
+                    { key: "guaranteeText", label: "Guarantee", value: page.copyJson.guaranteeText, rows: 3 },
+                    {
+                      key: "faq",
+                      label: "FAQ (question on the first line, answer below; blank line between items)",
+                      value: formatFaq(page.copyJson.faq),
+                      rows: 8,
+                    },
+                    { key: "cta", label: "Button text", value: page.copyJson.cta },
+                  ]}
+                  onSave={(v) =>
+                    saveJson(`/api/sales-pages/${page.id}`, {
+                      headline: v.headline,
+                      subheadline: v.subheadline,
+                      copy: {
+                        problemAgitation: v.problemAgitation,
+                        mechanismExplainer: v.mechanismExplainer,
+                        whatsIncluded: v.whatsIncluded,
+                        bonusesText: v.bonusesText,
+                        guaranteeText: v.guaranteeText,
+                        faq: parseFaq(v.faq),
+                        cta: v.cta,
+                      },
+                    })
+                  }
+                  onCancel={() => setEditing(null)}
+                />
+              ) : (
                 <div key={page.id} className="rounded-lg border border-neutral-200 bg-white p-5">
                   <div className="mb-2 flex items-start justify-between">
                     <div>
@@ -154,13 +236,29 @@ export function OfferSection({ productId }: { productId: string }) {
                         Clarity (AI's own read): {page.clarityScore}/100
                       </span>
                     </div>
-                    {page.selected ? (
-                      <span className="text-xs font-medium text-green-700">In use</span>
-                    ) : (
-                      <button onClick={() => handleSelect(page.id)} className="text-xs font-medium text-neutral-700 underline">
-                        Use this one
-                      </button>
-                    )}
+                    <div className="flex shrink-0 items-center gap-3">
+                      {page.selected ? (
+                        <span className="text-xs font-medium text-green-700">In use</span>
+                      ) : (
+                        <button onClick={() => handleSelect(page.id)} className="text-xs font-medium text-neutral-700 underline">
+                          Use this one
+                        </button>
+                      )}
+                      <LinkButton onClick={() => setEditing(`page:${page.id}`)}>Edit</LinkButton>
+                      {!page.selected && (
+                        <LinkButton
+                          danger
+                          onClick={async () => {
+                            if (!window.confirm("Delete this sales page variant?")) return;
+                            const r = await sendJson(`/api/sales-pages/${page.id}`, "DELETE");
+                            if (!r.ok) setError(r.error);
+                            else await load();
+                          }}
+                        >
+                          Delete
+                        </LinkButton>
+                      )}
+                    </div>
                   </div>
                   <h3 className="mb-1 text-lg font-semibold text-neutral-900">{page.headline}</h3>
                   <p className="mb-2 text-sm text-neutral-600">{page.subheadline}</p>

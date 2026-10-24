@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { LinkButton } from "@/components/InlineForm";
+import { sendJson } from "@/lib/client-api";
 
 type AssetType = "lead_magnet" | "email_sequence" | "social_posts" | "webinar_script";
 type Asset = { id: string; type: AssetType; title: string; contentJson: unknown; createdAt: string };
@@ -45,6 +47,17 @@ export function RepurposeSection({ productId }: { productId: string }) {
       return;
     }
     setGenerating(null);
+    await load();
+  }
+
+  async function handleDelete(asset: Asset) {
+    if (!window.confirm(`Delete "${asset.title}"?`)) return;
+    setError(null);
+    const result = await sendJson(`/api/repurposed-assets/${asset.id}`, "DELETE");
+    if (!result.ok) {
+      setError(result.error);
+      return;
+    }
     await load();
   }
 
@@ -137,12 +150,14 @@ export function RepurposeSection({ productId }: { productId: string }) {
                   </span>
                   <span className="ml-2 text-sm font-medium text-neutral-900">{asset.title}</span>
                 </div>
-                <button
-                  onClick={() => setExpanded(expanded === asset.id ? null : asset.id)}
-                  className="text-xs text-neutral-500 underline"
-                >
-                  {expanded === asset.id ? "Collapse" : "Expand"}
-                </button>
+                <div className="flex gap-3">
+                  <LinkButton onClick={() => setExpanded(expanded === asset.id ? null : asset.id)}>
+                    {expanded === asset.id ? "Collapse" : "Expand"}
+                  </LinkButton>
+                  <LinkButton danger onClick={() => handleDelete(asset)}>
+                    Delete
+                  </LinkButton>
+                </div>
               </div>
               {expanded === asset.id && <div className="border-t border-neutral-100 pt-3">{renderContent(asset)}</div>}
             </li>
